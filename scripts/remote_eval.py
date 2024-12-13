@@ -8,19 +8,16 @@ import pandas as pd
 import tqdm
 import tyro
 from moviepy.editor import ImageSequenceClip
+from openpi_client import image_tools, websocket_policy_client
 from PIL import Image
 
 from droid.robot_env import RobotEnv
-from scripts import websocket_policy_client
 
 faulthandler.enable()
 
 
 @dataclasses.dataclass
 class Args:
-    # Required arguments
-    policy_name: str
-
     # Hardware parameters
     left_camera_id: str = "24259877"
     right_camera_id: str = "24514023"
@@ -43,7 +40,7 @@ def main(args: Args):
 
     policy_client = websocket_policy_client.WebsocketClientPolicy(args.remote_host, args.remote_port)
 
-    df = pd.DataFrame(columns=["policy_name", "success", "duration", "video_filename"])
+    df = pd.DataFrame(columns=["success", "duration", "video_filename"])
 
     while True:
         # Rollout parameters
@@ -71,9 +68,14 @@ def main(args: Args):
                     actions_from_chunk_completed = 0
 
                     request_data = {
-                        "observation/exterior_image_1_left": np.array(curr_obs["left_image"]),
-                        "observation/exterior_image_2_left": np.array(curr_obs["right_image"]),
-                        "observation/wrist_image_left": np.array(curr_obs["wrist_image"]),
+                        # TODO(karl): Feel free to rename keys here. They'll need to match the logic in DroidInputs on the server side.
+                        "observation/exterior_image_1_left": image_tools.resize_with_pad(
+                            curr_obs["left_image"], 224, 224
+                        ),
+                        "observation/exterior_image_2_left": image_tools.resize_with_pad(
+                            curr_obs["right_image"], 224, 224
+                        ),
+                        "observation/wrist_image_left": image_tools.resize_with_pad(curr_obs["wrist_image"], 224, 224),
                         "observation/joint_position": curr_obs["joint_position"],
                         "observation/gripper_position": curr_obs["gripper_position"],
                     }
@@ -101,7 +103,7 @@ def main(args: Args):
                 break
 
         video = np.stack(video)
-        save_filename = args.policy_name + "_" + timestamp
+        save_filename = "video_" + timestamp
         # np.save(os.path.join("videos", save_filename), video)
         ImageSequenceClip(list(video), fps=10).write_videofile(save_filename + ".mp4", codec="libx264")
 
@@ -123,7 +125,6 @@ def main(args: Args):
 
         df = df.append(
             {
-                "policy_name": args.policy_name,
                 "success": success,
                 "duration": t_step,
                 "video_filename": save_filename,
@@ -159,9 +160,9 @@ def _extract_observation(args: Args, obs_dict, save_to_disk=False):
     wrist_image = wrist_image[..., :3]
 
     # Convert to RGB
-    left_image = np.concatenate([left_image[..., 2:], left_image[..., 1:2], left_image[..., :1]], axis=-1)
-    right_image = np.concatenate([right_image[..., 2:], right_image[..., 1:2], right_image[..., :1]], axis=-1)
-    wrist_image = np.concatenate([wrist_image[..., 2:], wrist_image[..., 1:2], wrist_image[..., :1]], axis=-1)
+    left_image = left_image[..., ::-1]
+    right_image = right_image[..., ::-1]
+    wrist_image = wrist_image[..., ::-1]
 
     # In addition to image observations, also capture the proprioceptive state
     robot_state = obs_dict["robot_state"]
@@ -188,5 +189,4 @@ def _extract_observation(args: Args, obs_dict, save_to_disk=False):
 
 if __name__ == "__main__":
     args: Args = tyro.cli(Args)
-    assert args.policy_name in ["droid_dct", "droid_rt2", "droid_dct_universal", "droid_fsq"]
     main(args)
