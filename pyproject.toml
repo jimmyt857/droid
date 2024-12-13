@@ -30,6 +30,7 @@ dependencies = [
     "pyrallis",
     "scipy",
     "tqdm",
+    "tyro",
     "zerorpc",
 ]
 
